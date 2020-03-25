@@ -12,7 +12,7 @@ import abc
 class BaseKernel:
 
     @staticmethod
-    def create(name, desc, expr, *params, *hyperparameter_specs):
+    def create(name, desc, expr, *params, **hyperparameter_specs):
         """
         Wrapper for kernel creation
         """
@@ -201,7 +201,8 @@ class Combination(BaseKernel):
 
     def __init__(self, *kernels):
         self._kernels = []
-        self.kernels(kernels) # worth abstracting?
+        # self.kernels(kernels) # worth abstracting?
+        self._kernels.extend(kernels)
 
     def __repr__(self):
         cls = self.__name__
@@ -209,18 +210,18 @@ class Combination(BaseKernel):
 
         return f"{cls}({names})"
     
-    @property
-    def kernels(self):
-        return self._kernels
+    # @property
+    # def kernels(self):
+    #     return self._kernels
     
-    @kernels.setter # supports self-combination
-    def kernels(self, *kernels):
-        #add docstring
-        for ker in kernels: # append combination
-            if isinstance(k, self.__class__):
-                self._kernels.extend(ker.kernels)
-            else:
-                kernels.append(ker)
+    # @kernels.setter # supports self-combination
+    # def kernels(self, *kernels):
+    #     #add docstring
+    #     for ker in kernels: # append combination
+    #         if isinstance(k, self.__class__):
+    #             self._kernels.extend(ker.kernels)
+    #         else:
+    #             self._kernels.append(ker)
     
     def __call__(self, x1, x2, jac=False):
         return self._agg([ker(x1, x2, jac) for ker in self.kernels])
@@ -260,7 +261,8 @@ class Product(Combination):
 
 
 def Constant(c, c_bounds=(0, np.inf)):
-    """Creates a no-op kernel that returns a constant value (often being 1),
+    """
+    Creates a no-op kernel that returns a constant value (often being 1),
     i.e. :math:`k_\mathrm{c}(\cdot, \cdot) \equiv constant`
 
     Parameters
