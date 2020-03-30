@@ -49,5 +49,5 @@ setup(
     tests_require=test_requirements,
     url='https://github.com/drakejwong/kernelbridge',
     version='0.1a1',
-    zip_safe=False,
+    zip_safe=True,
 )

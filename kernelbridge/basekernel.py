@@ -14,19 +14,28 @@ class BaseKernel:
     @staticmethod
     def create(name, desc, expr, *params, **hyperparameter_specs):
         """
-        Wrapper for kernel creation
+        Wrapper for kernel creation.
+        Heavily inspired by GraphDot (Yu-Hang Tang).
+
+        Parameters:
+            name (str): name of kernel
+            desc (str): description of kernel properties
+            expr (str): SymPy compatible mathematical expression
+            *params (str): SymPy compatible input variable names (2)
+            **hyperparameter_specs (str): kwarg specifications
+        Returns
         """
 
-        ''' Parse expression '''
+        """ Parse expression """
         if isinstance(expr, str):
             expr = sy.sympify(expr)
         
-        ''' Parse parameters '''
+        """ Parse parameters """
         if len(params) != 2:
-            raise ValueError(f"A kernel takes in exactly two parameters (received {len(params)}).")
+            raise ValueError(f"A kernel only takes in exactly two parameters (received {len(params)}).")
         params = [sy.Symbol(s) if isinstance(s, str) else s for s in params]
 
-        ''' Parse hyperparameters + specs, input cases '''
+        """ Parse hyperparameters + specs, input cases """
         hypers = OrderedDict()
         for spec in hyperparameter_specs:
             if not hasattr(spec, '__iter__'):
@@ -49,7 +58,6 @@ class BaseKernel:
                     '(symbol, dtype)\n',
                     '(symbol, dtype, lbound, ubound)\n',
                 )
-            ### doc?
 
         class Kernel(BaseKernel):
             """
@@ -92,7 +100,7 @@ class BaseKernel:
                                 f"Bounds for {symbol} of kernel {self.__name__} not set, and no default bounds exist"
                             )
             
-            @property # cache/memoize?
+            @property
             def _params_hypers(self):
                 if not hasattr(self, '_params_hypers_cached'):
                     self._params_hypers_cached = [
@@ -118,7 +126,11 @@ class BaseKernel:
                     ]
                 return self._jac_cached
             
-            def __call__(self, x1, x2, jac=False): # K(x1) -> K(x1,x1) vs. explicit
+            def __call__(self, x1, x2, jac=False):
+                """
+                Evaluates Kernel on pairwise element input.
+                Optionally returns Jacobian.
+                """
                 if jac:
                     return (
                         self._K(x1, x2, *self.theta),
@@ -167,7 +179,8 @@ class BaseKernel:
 
     def __add__(self, other):
         """
-        Kernel -> Kernel + Kernel
+        Python magic method for Kernel addition (k1 + k2).
+        k_+(x, y) = k_1(x, y) + k_2(x, y)
         """
         return Sum(
             self,
@@ -181,6 +194,10 @@ class BaseKernel:
         )
 
     def __mul__(self, other):
+        """
+        Python magic method for Kernel multiplication (k1 * k2).
+        k_\times(x_1, x_2) = k_1(x_1, x_2) \cdot k_2(x_1, x_2)
+        """
         return Product(
             self,
             other if isinstance(other, BaseKernel) else Constant(other)
@@ -195,13 +212,12 @@ class BaseKernel:
 
 class Combination(BaseKernel):
     """
-    Parent class for all kernel operations.
+    Parent class for kernel operations.
     Inspired by GPflow architecture.
     """
 
     def __init__(self, *kernels):
         self._kernels = []
-        # self.kernels(kernels) # worth abstracting?
         self._kernels.extend(kernels)
 
     def __repr__(self):
@@ -209,19 +225,6 @@ class Combination(BaseKernel):
         names = [f'{ker.__name__}' for ker in self.kernels]
 
         return f"{cls}({names})"
-    
-    # @property
-    # def kernels(self):
-    #     return self._kernels
-    
-    # @kernels.setter # supports self-combination
-    # def kernels(self, *kernels):
-    #     #add docstring
-    #     for ker in kernels: # append combination
-    #         if isinstance(k, self.__class__):
-    #             self._kernels.extend(ker.kernels)
-    #         else:
-    #             self._kernels.append(ker)
     
     def __call__(self, x1, x2, jac=False):
         return self._agg([ker(x1, x2, jac) for ker in self.kernels])
@@ -233,6 +236,10 @@ class Combination(BaseKernel):
 
 
 class Sum(Combination):
+    """
+    Sum kernel based on input list of kernels.
+    """
+
     def __init__(self, *kernels):
         self.__name__ = "SumKernel"
         self._desc = "Combination of kernels via addition"
@@ -244,6 +251,10 @@ class Sum(Combination):
         return np.sum
 
 class Product(Combination):
+    """
+    Product kernel based on input list of kernels.
+    """
+
     def __init__(self, *kernels):
         self.__name__ = "ProductKernel"
         self._desc = "Combination of kernels via multiplication"
@@ -262,18 +273,12 @@ class Product(Combination):
 
 def Constant(c, c_bounds=(0, np.inf)):
     """
-    Creates a no-op kernel that returns a constant value (often being 1),
-    i.e. :math:`k_\mathrm{c}(\cdot, \cdot) \equiv constant`
+    Kernel that solely evaluates to a constant (often 1).
 
     Parameters
-    ----------
-    constant: float > 0
-        The value of the kernel
-
+        constant (float > 0): the value of the kernel
     Returns
-    -------
-    BaseKernel
-        A kernel instance of corresponding behavior
+        Kernel: a kernel instance of corresponding behavior
     """
 
     # only works with python >= 3.6
