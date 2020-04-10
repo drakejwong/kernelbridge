@@ -14,7 +14,7 @@ import abc
 class BaseKernel:
 
     @staticmethod
-    def create(name, desc, expr, *inputs, **hyperparameter_specs):
+    def create(name, desc, expr, inputs, *hyperparameter_specs):
         r"""
         Wrapper for extensible Kernel class creation.
         Heavily inspired by GraphDot (Yu-Hang Tang).
@@ -27,7 +27,7 @@ class BaseKernel:
             Description of kernel properties
         expr: str
             SymPy compatible mathematical expression
-        *inputs: list(str)
+        *inputs: tuple(str)
             SymPy compatible input variable names (2)
         **hyperparameter_specs: dict
             `kwarag` specs for hyperparameters (symbol, bounds, docstr)
@@ -36,6 +36,8 @@ class BaseKernel:
         ----------
         class
             New Kernel class based on given parameters
+
+        TODO: __repr__ (Template?)
         """
 
         """ Parse expression """
@@ -44,11 +46,14 @@ class BaseKernel:
         
         """ Parse input variable definitions """
         if len(inputs) != 2:
-            raise ValueError(f"A kernel must have exactly two inputs (received {len(inputs)}).")
+            raise ValueError(
+                f"""A kernel must have exactly two inputs
+                (received {len(inputs)})."""
+            )
         inputs = [sy.Symbol(s) if isinstance(s, str) else s for s in inputs]
 
         """ Parse hyperparameters + specifications """
-        hyperdefs = OrderedDict()
+        hypers = OrderedDict()
         for spec in hyperparameter_specs:
             if not hasattr(spec, '__iter__'):
                 symbol = spec
@@ -104,7 +109,7 @@ class BaseKernel:
                 self._theta_bounds = bounds = OrderedDict()
 
                 for symbol, value in zip(self._hypers, args):
-                    values[theta] = value
+                    values[symbol] = value
                 
                 for symbol in self._hypers:
                     try:
@@ -116,7 +121,7 @@ class BaseKernel:
                             )
 
                     try:
-                        values[symbol] = kwargs['%_bounds' % symbol]
+                        values[symbol] = kwargs['%s_bounds' % symbol]
                     except KeyError:
                         try:
                             bounds[symbol] = self._hypers[symbol]['bounds']
@@ -147,7 +152,7 @@ class BaseKernel:
                 if not hasattr(self, '_jac_cached'):
                     self._jac_cached = [
                         lambdify(self._vars_and_hypers, sy.diff(expr, h))
-                        for h in self._hyperdefs
+                        for h in self._hypers
                     ]
                 return self._jac_cached
             
@@ -235,24 +240,26 @@ class BaseKernel:
         )
 
 
-class Combination(BaseKernel):
+class Composition(BaseKernel):
     r"""
     Parent class for kernel operations.
     Inspired by GPflow architecture.
+
+    TODO: storing thetas (hypers) for each kernel
+    TODO: composing Composition kernels with other kernels--extend list
     """
 
     def __init__(self, *kernels):
-        self._kernels = []
-        self._kernels.extend(kernels)
+        self._kernels = list(kernels[0]) # need better parse *args
 
     def __repr__(self):
         cls = self.__name__
-        names = [f'{ker.__name__}' for ker in self.kernels]
+        names = [f'{ker.__name__}' for ker in self._kernels]
 
         return f"{cls}({names})"
     
     def __call__(self, x1, x2, jac=False):
-        return self._agg([ker(x1, x2, jac) for ker in self.kernels])
+        return self._agg([ker(x1, x2, jac) for ker in self._kernels])
     
     @property
     @abc.abstractmethod
@@ -260,14 +267,14 @@ class Combination(BaseKernel):
         pass
 
 
-class Sum(Combination):
+class Sum(Composition):
     r"""
     Sum kernel based on input list of kernels.
     """
 
     def __init__(self, *kernels):
         self.__name__ = "SumKernel"
-        self._desc = "Combination of kernels via addition"
+        self._desc = "Composition of kernels via addition"
         
         super().__init__(kernels)
 
@@ -275,14 +282,14 @@ class Sum(Combination):
     def _agg(self):
         return np.sum
 
-class Product(Combination):
+class Product(Composition):
     r"""
     Product kernel based on input list of kernels.
     """
 
     def __init__(self, *kernels):
         self.__name__ = "ProductKernel"
-        self._desc = "Combination of kernels via multiplication"
+        self._desc = "Composition of kernels via multiplication"
         
         super().__init__(kernels)
 
@@ -317,7 +324,7 @@ def Constant(c, c_bounds=(0, np.inf)):
 
     # only works with python >= 3.6
     # @cpptype(constant=np.float32)
-    @cpptype([('c', np.float32)])
+    # @cpptype([('c', np.float32)])
     class ConstantKernel(BaseKernel):
         def __init__(self, c, c_bounds):
             self.c = float(c)
