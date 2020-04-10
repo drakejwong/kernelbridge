@@ -37,6 +37,8 @@ class BaseKernel:
         ----------
         class
             New Kernel class based on given parameters
+
+        TODO: __repr__ (Template?)
         """
 
         """ Parse expression """
@@ -104,7 +106,6 @@ class BaseKernel:
 
                 for symbol, value in zip(self._hypers, args):
                     values[symbol] = value
-
                 for symbol in self._hypers:
                     try:
                         values[symbol] = kwargs[symbol]
@@ -280,7 +281,6 @@ class Composition(BaseKernel):
 
     def __call__(self, x1, x2, jac=False):
         return self._agg([ker(x1, x2, jac) for ker in self._kernels])
-
     @property
     @abc.abstractmethod
     def _agg(self):
@@ -295,13 +295,11 @@ class Sum(Composition):
     def __init__(self, *kernels):
         self.__name__ = "SumKernel"
         self._desc = "Composition of kernels via addition"
-
         super().__init__(kernels)
 
     @property
     def _agg(self):
         return np.sum
-
 
 class Product(Composition):
     r"""
@@ -311,7 +309,6 @@ class Product(Composition):
     def __init__(self, *kernels):
         self.__name__ = "ProductKernel"
         self._desc = "Composition of kernels via multiplication"
-
         super().__init__(kernels)
 
     @property
