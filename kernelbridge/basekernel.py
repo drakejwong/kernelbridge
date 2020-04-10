@@ -1,6 +1,8 @@
 """
-This module defines the base kernel and
-rules for kernel creation and composition.
+This module defines the abstract BaseKernel class for kernel creation
+and establishes a context-free grammar for kernel composition.
+
+Heavily inspired by GraphDot (Yu-Hang Tang).
 """
 
 from collections import namedtuple, OrderedDict
@@ -12,31 +14,41 @@ import abc
 class BaseKernel:
 
     @staticmethod
-    def create(name, desc, expr, *params, **hyperparameter_specs):
-        """
-        Wrapper for kernel creation.
+    def create(name, desc, expr, *inputs, **hyperparameter_specs):
+        r"""
+        Wrapper for extensible Kernel class creation.
         Heavily inspired by GraphDot (Yu-Hang Tang).
 
-        Parameters:
-            name (str): name of kernel
-            desc (str): description of kernel properties
-            expr (str): SymPy compatible mathematical expression
-            *params (str): SymPy compatible input variable names (2)
-            **hyperparameter_specs (str): kwarg specifications
+        Parameters
+        ----------
+        name: str
+            Name of kernel
+        desc: str
+            Description of kernel properties
+        expr: str
+            SymPy compatible mathematical expression
+        *inputs: list(str)
+            SymPy compatible input variable names (2)
+        **hyperparameter_specs: dict
+            `kwarag` specs for hyperparameters (symbol, bounds, docstr)
+
         Returns
+        ----------
+        class
+            New Kernel class based on given parameters
         """
 
         """ Parse expression """
         if isinstance(expr, str):
             expr = sy.sympify(expr)
         
-        """ Parse parameters """
-        if len(params) != 2:
-            raise ValueError(f"A kernel only takes in exactly two parameters (received {len(params)}).")
-        params = [sy.Symbol(s) if isinstance(s, str) else s for s in params]
+        """ Parse input variable definitions """
+        if len(inputs) != 2:
+            raise ValueError(f"A kernel must have exactly two inputs (received {len(inputs)}).")
+        inputs = [sy.Symbol(s) if isinstance(s, str) else s for s in inputs]
 
-        """ Parse hyperparameters + specs, input cases """
-        hypers = OrderedDict()
+        """ Parse hyperparameters + specifications """
+        hyperdefs = OrderedDict()
         for spec in hyperparameter_specs:
             if not hasattr(spec, '__iter__'):
                 symbol = spec
@@ -47,28 +59,41 @@ class BaseKernel:
             if len(spec) == 2:
                 symbol, dtype = spec
                 hypers[symbol] = dict(dtype=np.dtype(dtype))
+            if len(spec) == 3:
+                symbol, dtype, doc = spec
+                hypers[symbol] = dict(dtype=np.dtype(dtype), doc=doc)
             elif len(spec) == 4:
                 symbol, dtype, lb, ub = spec
                 hypers[symbol] = dict(dtype=np.dtype(dtype),
-                                         bounds=(lb, ub))
+                                      bounds=(lb, ub))
+            elif len(spec) == 5:
+                symbol, dtype, lb, ub, doc = spec
+                hypers[symbol] = dict(dtype=np.dtype(dtype),
+                                      bounds=(lb, ub),
+                                      doc=doc)
             else:
                 raise ValueError(
-                    'Invalid hyperparameter specification, must be one of\n'
+                    'Invalid hyperparameter specification, '
+                    'must be one of\n'
                     '(symbol)\n',
                     '(symbol, dtype)\n',
-                    '(symbol, dtype, lbound, ubound)\n',
+                    '(symbol, dtype, doc)\n',
+                    '(symbol, dtype, lb, ub)\n',
+                    '(symbol, dtype, lb, ub, doc)\n',
                 )
 
         class Kernel(BaseKernel):
-            """
-            Template kernel interface for user-defined expression, hyperparameters, etc.
+            r"""
+            Template kernel interface.
+
+            Constructs new Kernel class via BaseKernel.create.
             """
 
             __name__ = name
 
             _desc = desc
             _expr = expr
-            _params = params
+            _inputs = inputs
             _hypers = hypers
             _dtype = np.dtype([(k, v['dtype']) for k, v in hypers.items()],
                                 align=True)
@@ -101,18 +126,18 @@ class BaseKernel:
                             )
             
             @property
-            def _params_hypers(self):
-                if not hasattr(self, '_params_hypers_cached'):
-                    self._params_hypers_cached = [
-                        *self._params, *self._hypers.keys()
+            def _inputs_hypers(self):
+                if not hasattr(self, '_inputs_hypers_cached'):
+                    self._inputs_hypers_cached = [
+                        *self._inputs, *self._hypers.keys()
                     ]
-                return self._params_hypers_cached
+                return self._inputs_hypers_cached
             
             @property
             def _K(self):
                 if not hasattr(self, '_K_cached'):
                     self._K_cached = lambdify(
-                        self._params_hypers,
+                        self._inputs_hypers,
                         self._expr
                     )
                 return self._K_cached
@@ -127,8 +152,8 @@ class BaseKernel:
                 return self._jac_cached
             
             def __call__(self, x1, x2, jac=False):
-                """
-                Evaluates Kernel on pairwise element input.
+                r"""
+                Evaluates Kernel on pairwise input based on class' expr.
                 Optionally returns Jacobian.
                 """
                 if jac:
@@ -178,7 +203,7 @@ class BaseKernel:
         return Kernel
 
     def __add__(self, other):
-        """
+        r"""
         Python magic method for Kernel addition (k1 + k2).
         k_+(x, y) = k_1(x, y) + k_2(x, y)
         """
@@ -194,7 +219,7 @@ class BaseKernel:
         )
 
     def __mul__(self, other):
-        """
+        r"""
         Python magic method for Kernel multiplication (k1 * k2).
         k_\times(x_1, x_2) = k_1(x_1, x_2) \cdot k_2(x_1, x_2)
         """
@@ -211,7 +236,7 @@ class BaseKernel:
 
 
 class Combination(BaseKernel):
-    """
+    r"""
     Parent class for kernel operations.
     Inspired by GPflow architecture.
     """
@@ -236,7 +261,7 @@ class Combination(BaseKernel):
 
 
 class Sum(Combination):
-    """
+    r"""
     Sum kernel based on input list of kernels.
     """
 
@@ -251,7 +276,7 @@ class Sum(Combination):
         return np.sum
 
 class Product(Combination):
-    """
+    r"""
     Product kernel based on input list of kernels.
     """
 
@@ -271,14 +296,23 @@ class Product(Combination):
 ###
 
 
+"""
+PREDEFINED KERNELS
+"""
+
 def Constant(c, c_bounds=(0, np.inf)):
-    """
+    r"""
     Kernel that solely evaluates to a constant (often 1).
 
     Parameters
-        constant (float > 0): the value of the kernel
+    ----------
+    c: float > 0
+        The value of the kernel
+
     Returns
-        Kernel: a kernel instance of corresponding behavior
+    ----------
+    BaseKernel
+        A kernel instance of corresponding behavior
     """
 
     # only works with python >= 3.6
@@ -323,3 +357,43 @@ def Constant(c, c_bounds=(0, np.inf)):
             return (self.c_bounds,)
 
     return ConstantKernel(c, c_bounds)
+
+
+SquaredExponential = BaseKernel.create(
+    "SquaredExponential",
+
+    r"""A squared exponential kernel smoothly transitions from 1 to
+    0 as the distance between two vectors increases from zero to infinity, i.e.
+    :math:`k_\mathrm{se}(\mathbf{x}, \mathbf{y}) = \exp(-\frac{1}{2}
+    \frac{\lVert \mathbf{x} - \mathbf{y} \rVert^2}{\sigma^2})`""",
+
+    'exp(-0.5 * (x - y)**2 * length_scale**-2)',
+
+    ('x', 'y'),
+
+    ('length_scale', np.float32, 1e-6, np.inf,
+     r"""Determines how quickly should the kernel decay to zero. The kernel has
+     a value of approx. 0.606 at one length scale, 0.135 at two length
+     scales, and 0.011 at three length scales.""")
+)
+
+RationalQuadratic = BaseKernel.create(
+    'RationalQuadratic',
+
+    r"""A rational quadratic kernel is equivalent to the sum of many squared
+    exponential kernels with different length scales. The parameter `alpha`
+    tunes the relative weights between large and small length scales. When
+    alpha approaches infinity, the kernel is identical to the squared
+    exponential kernel.""",
+
+    '(1 + (x - y)**2 / (2 * alpha * length_scale**2))**(-alpha)',
+
+    ('x', 'y'),
+
+    ('length_scale', np.float32, 1e-6, np.inf,
+     r"""The smallest length scale of the square exponential components."""),
+    ('alpha', np.float32, 1e-3, np.inf,
+     r"""The relative weights of large-scale square exponential components.
+     Larger alpha values leads to a faster decay of the weights for larger
+     length scales.""")
+)
