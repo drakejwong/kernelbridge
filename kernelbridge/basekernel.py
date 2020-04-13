@@ -11,6 +11,7 @@ import sympy as sy
 from sympy.utilities.lambdify import lambdify
 import abc
 
+
 class BaseKernel:
 
     @staticmethod
@@ -36,14 +37,12 @@ class BaseKernel:
         ----------
         class
             New Kernel class based on given parameters
-
-        TODO: __repr__ (Template?)
         """
 
         """ Parse expression """
         if isinstance(expr, str):
             expr = sy.sympify(expr)
-        
+
         """ Parse input variable definitions """
         if len(inputs) != 2:
             raise ValueError(
@@ -88,11 +87,6 @@ class BaseKernel:
                 )
 
         class Kernel(BaseKernel):
-            r"""
-            Template kernel interface.
-
-            Constructs new Kernel class via BaseKernel.create.
-            """
 
             __name__ = name
 
@@ -101,7 +95,7 @@ class BaseKernel:
             _inputs = inputs
             _hypers = hypers
             _dtype = np.dtype([(k, v['dtype']) for k, v in hypers.items()],
-                                align=True)
+                              align=True)
 
             def __init__(self, *args, **kwargs):
 
@@ -110,7 +104,7 @@ class BaseKernel:
 
                 for symbol, value in zip(self._hypers, args):
                     values[symbol] = value
-                
+
                 for symbol in self._hypers:
                     try:
                         values[symbol] = kwargs[symbol]
@@ -127,9 +121,11 @@ class BaseKernel:
                             bounds[symbol] = self._hypers[symbol]['bounds']
                         except KeyError:
                             raise KeyError(
-                                f"Bounds for {symbol} of kernel {self.__name__} not set, and no default bounds exist"
+                                f"Bounds for {symbol} of kernel"
+                                f"{self.__name__} not set, and no"
+                                "default bounds exist"
                             )
-            
+
             @property
             def _inputs_hypers(self):
                 if not hasattr(self, '_inputs_hypers_cached'):
@@ -137,7 +133,7 @@ class BaseKernel:
                         *self._inputs, *self._hypers.keys()
                     ]
                 return self._inputs_hypers_cached
-            
+
             @property
             def _K(self):
                 if not hasattr(self, '_K_cached'):
@@ -146,7 +142,7 @@ class BaseKernel:
                         self._expr
                     )
                 return self._K_cached
-            
+
             @property
             def _jac(self):
                 if not hasattr(self, '_jac_cached'):
@@ -155,7 +151,7 @@ class BaseKernel:
                         for h in self._hypers
                     ]
                 return self._jac_cached
-            
+
             def __call__(self, x1, x2, jac=False):
                 r"""
                 Evaluates Kernel on pairwise input based on class' expr.
@@ -168,43 +164,67 @@ class BaseKernel:
                     )
                 else:
                     return self._K(x1, x2, *self.theta)
-            
+
             def __repr__(self):
                 cls = self.__name__
-                theta = [f'{t}={v}' for t, v in self._theta_values.items()]
-                bounds = [f'{t}_bounds={v}' for t, v in self._theta_bounds.items()]
+                theta = [
+                    f"{t}={v}"
+                    for t, v in self._theta_values.items()
+                ]
+                bounds = [
+                    f"{t}_bounds={v}"
+                    for t, v in self._theta_bounds.items()
+                ]
 
                 return f"{cls}({theta}, {bounds})"
-            
+
+            def __str__(self):
+                return self.__name__
+
             ###
-            ### gen_expr
+            # gen_expr
             ###
 
             @property
             def dtype(self):
                 return self._dtype
-            
+
             @property
             def state(self):
                 return tuple(self._theta_values.values())
-            
+
             @property
             def theta(self):
                 return namedtuple(
                     self.__name__ + 'Hyperparameters',
                     self._theta_values.keys()
                 )(**self._theta_values)
-            
+
             @theta.setter
             def theta(self, seq):
                 assert(len(seq) == len(self._theta_values))
                 for theta, value in zip(self._hypers, seq):
-                    self._theta_values[theta] = value # check bounds?
+                    self._theta_values[theta] = value
 
             @property
             def bounds(self):
                 return tuple(self._theta_bounds.values())
-        
+
+        doc_hypers = [
+            f"""{symbol}: {hdef["dtype"]}
+                {hdef["doc"]}
+            {symbol}_bounds: pair of {hdef["dtype"]}
+                Lower and upper bounds of {symbol}
+            """ for symbol, hdef in hypers.items()
+        ]
+
+        Kernel.__doc__ = rf"""
+            {desc}
+            Parameters
+            ----------
+            {"".join(doc_hypers)}
+        """
+
         return Kernel
 
     def __add__(self, other):
@@ -250,17 +270,17 @@ class Composition(BaseKernel):
     """
 
     def __init__(self, *kernels):
-        self._kernels = list(kernels[0]) # need better parse *args
+        self._kernels = list(kernels[0])  # need better parse *args
 
     def __repr__(self):
         cls = self.__name__
-        names = [f'{ker.__name__}' for ker in self._kernels]
+        names = ", ".join([f"{ker.__name__}" for ker in self._kernels])
 
         return f"{cls}({names})"
-    
+
     def __call__(self, x1, x2, jac=False):
         return self._agg([ker(x1, x2, jac) for ker in self._kernels])
-    
+
     @property
     @abc.abstractmethod
     def _agg(self):
@@ -275,12 +295,13 @@ class Sum(Composition):
     def __init__(self, *kernels):
         self.__name__ = "SumKernel"
         self._desc = "Composition of kernels via addition"
-        
+
         super().__init__(kernels)
 
     @property
     def _agg(self):
         return np.sum
+
 
 class Product(Composition):
     r"""
@@ -290,7 +311,7 @@ class Product(Composition):
     def __init__(self, *kernels):
         self.__name__ = "ProductKernel"
         self._desc = "Composition of kernels via multiplication"
-        
+
         super().__init__(kernels)
 
     @property
@@ -298,14 +319,15 @@ class Product(Composition):
         return np.prod
 
 
-###
-### DirectSum, TensorProduct, RConvolution
-###
+#
+# DirectSum, TensorProduct, RConvolution
+#
 
 
 """
 PREDEFINED KERNELS
 """
+
 
 def Constant(c, c_bounds=(0, np.inf)):
     r"""
