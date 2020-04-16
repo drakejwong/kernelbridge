@@ -37,8 +37,6 @@ class BaseKernel:
         ----------
         class
             New Kernel class based on given parameters
-
-        TODO: __repr__ (Template?)
         """
 
         """ Parse expression """
@@ -300,6 +298,7 @@ class Sum(Composition):
     @property
     def _agg(self):
         return np.sum
+
 
 class Product(Composition):
     r"""
