@@ -10,7 +10,7 @@ from kernelbridge.basekernel import RationalQuadratic
 
 import numpy as np
 import random
-import copy
+# import copy
 
 inf = float("inf")
 nan = np.nan

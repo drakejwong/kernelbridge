@@ -178,7 +178,7 @@ class BaseKernel:
                 return f"{cls}({theta}, {bounds})"
 
             def __str__(self):
-                return self.__name__
+                return repr(self)
 
             ###
             # gen_expr
@@ -258,6 +258,71 @@ class BaseKernel:
             self
         )
 
+    """
+    GPflow interoperability
+    -> Module for wrapping Kernel?
+    """
+
+    @staticmethod
+    def _normalize_active_dims(value):
+        if value is None:
+            value = slice(None, None, None)
+        if not isinstance(value, slice):
+            value = np.array(value, dtype=int)
+        return value
+
+    @property
+    def active_dims(self):
+        if not hasattr(self, '_active_dims'):
+            self._active_dims = self._normalize_active_dims(None)
+        return self._active_dims
+
+    @active_dims.setter
+    def active_dims(self, value):
+        self._active_dims = self._normalize_active_dims(value)
+
+    def on_separate_dims(self, other):
+        """
+        GPflow method to check if two kernels share active dimensions.
+        """
+        if isinstance(self.active_dims, slice) or isinstance(other.active_dims, slice):
+            return False
+        elif self.active_dims is None or other.active_dims is None:
+            return False
+        else:
+            this_dims = self.active_dims.reshape(-1, 1)
+            other_dims = other.active_dims.resahpe(1, -1)
+            return not np.any(this_dims == other_dims)
+    
+    def slice(self, x1, x2):
+        """
+        GPflow method to select active dimensions of inputs via slicing.
+        """
+        dims = self.active_dims
+        if isinstance(dims, slice):
+            x1 = x1[..., dims]
+            if x2 is not None:
+                x2 = x2[..., dims]
+        # elif dims is not None:
+        #     x1 = tf.gather(x1, dims, axis=-1)
+        #     if x2 is not None:
+        #         x2 = tf.gather(x2, dims, axis=-1)
+        return x1, x2
+    
+    def slice_cov(self, cov):
+        """
+        GPflow method to slice active dims for covariance matrices
+        """
+    
+    def _validate_ard_active_dims(self, ard_parameter):
+        """
+        GPflow method to match automatic relevance determination with dims
+        """
+    
+    """
+    Wrapper for __call__ method interoperable with GPflow models
+    """
+
 
 class Composition(BaseKernel):
     r"""
@@ -277,8 +342,14 @@ class Composition(BaseKernel):
 
         return f"{cls}({names})"
 
+    def __str__(self):
+        if not hasattr(self, "_opstr"):
+            return repr(self)
+        return f"{self._opstr.join(self._kernels)}"
+
     def __call__(self, x1, x2, jac=False):
         return self._agg([ker(x1, x2, jac) for ker in self._kernels])
+
     @property
     @abc.abstractmethod
     def _agg(self):
@@ -293,6 +364,7 @@ class Sum(Composition):
     def __init__(self, *kernels):
         self.__name__ = "SumKernel"
         self._desc = "Composition of kernels via addition"
+        self._opstr = " + "
         super().__init__(kernels)
 
     @property
@@ -308,6 +380,7 @@ class Product(Composition):
     def __init__(self, *kernels):
         self.__name__ = "ProductKernel"
         self._desc = "Composition of kernels via multiplication"
+        self._opstr = " * "
         super().__init__(kernels)
 
     @property
