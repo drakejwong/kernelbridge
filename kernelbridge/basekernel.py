@@ -258,71 +258,6 @@ class BaseKernel:
             self
         )
 
-    """
-    GPflow interoperability
-    -> Module for wrapping Kernel?
-    """
-
-    @staticmethod
-    def _normalize_active_dims(value):
-        if value is None:
-            value = slice(None, None, None)
-        if not isinstance(value, slice):
-            value = np.array(value, dtype=int)
-        return value
-
-    @property
-    def active_dims(self):
-        if not hasattr(self, '_active_dims'):
-            self._active_dims = self._normalize_active_dims(None)
-        return self._active_dims
-
-    @active_dims.setter
-    def active_dims(self, value):
-        self._active_dims = self._normalize_active_dims(value)
-
-    def on_separate_dims(self, other):
-        """
-        GPflow method to check if two kernels share active dimensions.
-        """
-        if isinstance(self.active_dims, slice) or isinstance(other.active_dims, slice):
-            return False
-        elif self.active_dims is None or other.active_dims is None:
-            return False
-        else:
-            this_dims = self.active_dims.reshape(-1, 1)
-            other_dims = other.active_dims.resahpe(1, -1)
-            return not np.any(this_dims == other_dims)
-    
-    def slice(self, x1, x2):
-        """
-        GPflow method to select active dimensions of inputs via slicing.
-        """
-        dims = self.active_dims
-        if isinstance(dims, slice):
-            x1 = x1[..., dims]
-            if x2 is not None:
-                x2 = x2[..., dims]
-        # elif dims is not None:
-        #     x1 = tf.gather(x1, dims, axis=-1)
-        #     if x2 is not None:
-        #         x2 = tf.gather(x2, dims, axis=-1)
-        return x1, x2
-    
-    def slice_cov(self, cov):
-        """
-        GPflow method to slice active dims for covariance matrices
-        """
-    
-    def _validate_ard_active_dims(self, ard_parameter):
-        """
-        GPflow method to match automatic relevance determination with dims
-        """
-    
-    """
-    Wrapper for __call__ method interoperable with GPflow models
-    """
-
 
 class Composition(BaseKernel):
     r"""
@@ -418,6 +353,7 @@ def Constant(c, c_bounds=(0, np.inf)):
     # @cpptype([('c', np.float32)])
     class ConstantKernel(BaseKernel):
         def __init__(self, c, c_bounds):
+            self.__name__ = str(c)
             self.c = float(c)
             self.c_bounds = c_bounds
 
@@ -465,9 +401,9 @@ SquaredExponential = BaseKernel.create(
     :math:`k_\mathrm{se}(\mathbf{x}, \mathbf{y}) = \exp(-\frac{1}{2}
     \frac{\lVert \mathbf{x} - \mathbf{y} \rVert^2}{\sigma^2})`""",
 
-    'exp(-0.5 * (x - y)**2 * length_scale**-2)',
+    'exp(-0.5 * (x1 - x2)**2 * length_scale**-2)',
 
-    ('x', 'y'),
+    ('x1', 'x2'),
 
     ('length_scale', np.float32, 1e-6, np.inf,
      r"""Determines how quickly should the kernel decay to zero. The kernel has
@@ -484,9 +420,9 @@ RationalQuadratic = BaseKernel.create(
     alpha approaches infinity, the kernel is identical to the squared
     exponential kernel.""",
 
-    '(1 + (x - y)**2 / (2 * alpha * length_scale**2))**(-alpha)',
+    '(1 + (x1 - x2)**2 / (2 * alpha * length_scale**2))**(-alpha)',
 
-    ('x', 'y'),
+    ('x1', 'x2'),
 
     ('length_scale', np.float32, 1e-6, np.inf,
      r"""The smallest length scale of the square exponential components."""),
