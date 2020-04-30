@@ -7,6 +7,7 @@ import pytest
 from kernelbridge.basekernel import Constant
 from kernelbridge.basekernel import SquaredExponential
 from kernelbridge.basekernel import RationalQuadratic
+from kernelbridge.basekernel import RConvolution
 
 import numpy as np
 import random
@@ -149,3 +150,7 @@ def test_kernel_mul_kernel(k1, k2):
     # assert(k1.theta in kmul.theta)
     # assert(k2.theta in kmul.theta)
     # kmul.theta = kmul.theta
+
+@pytest.mark.parametrize('k', [RConvolution(r"GCA[AGCT]*ACT")])
+def test_rconv_kernel(k):
+    assert(k("AGGGCAACGTACGATCAACT", "AGGGCAACGTACGATCAACT") == 4)
