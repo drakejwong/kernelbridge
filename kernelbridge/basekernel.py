@@ -10,6 +10,7 @@ import numpy as np
 import sympy as sy
 from sympy.utilities.lambdify import lambdify
 import abc
+import re
 
 
 class BaseKernel:
@@ -146,7 +147,7 @@ class BaseKernel:
             def _jac(self):
                 if not hasattr(self, '_jac_cached'):
                     self._jac_cached = [
-                        lambdify(self._vars_and_hypers, sy.diff(expr, h))
+                        lambdify(self._inputs_hypers, sy.diff(expr, h))
                         for h in self._hypers
                     ]
                 return self._jac_cached
@@ -156,13 +157,18 @@ class BaseKernel:
                 Evaluates Kernel on pairwise input based on class' expr.
                 Optionally returns Jacobian.
                 """
+                if x2 is None:
+                    res = self._K(x1, x1, *self.theta)
+                else:
+                    res = self._K(x1, x2, *self.theta)
+
                 if jac:
                     return (
-                        self._K(x1, x2, *self.theta),
+                        res,
                         [j(x1, x2, *self.theta) for j in self._jac]
                     )
                 else:
-                    return self._K(x1, x2, *self.theta)
+                    return res
 
             def __repr__(self):
                 cls = self.__name__
@@ -272,7 +278,7 @@ class Composition(BaseKernel):
         self._kernels = list(kernels[0])  # need better parse *args
 
     def __repr__(self):
-        cls = self.__name__
+        cls = self.__name__  # pylint: disable=no-member
         names = ", ".join([f"{ker.__name__}" for ker in self._kernels])
 
         return f"{cls}({names})"
@@ -280,7 +286,7 @@ class Composition(BaseKernel):
     def __str__(self):
         if not hasattr(self, "_opstr"):
             return repr(self)
-        return f"{self._opstr.join(self._kernels)}"
+        return f"{self._opstr.join(self._kernels)}" # pylint: disable=no-member
 
     def __call__(self, x1, x2, jac=False):
         return self._agg([ker(x1, x2, jac) for ker in self._kernels])
@@ -326,6 +332,39 @@ class Product(Composition):
 #
 # DirectSum, TensorProduct, RConvolution
 #
+
+
+class RConvolution(Composition):
+    r"""
+    R-convolution kernel based on user-defined re decomposition.
+    Default behavior: Kronecker delta applied to subsequences of inputs
+    """
+
+    def __init__(self, regex):
+        self.__name__ = "RConvolutionKernel"
+        self._desc = "R-convolution"
+        self._kernels = None
+        self._regex = regex
+    
+    def __call__(self, x1, x2):
+        x1ss = [
+            x1[i:j + 1]
+            for i in range(len(x1))
+            for j in range(i, len(x1))
+            if re.search(self._regex, x1[i:j + 1])
+        ]
+        x2ss = [
+            x2[i:j + 1]
+            for i in range(len(x2))
+            for j in range(i, len(x2))
+            if re.search(self._regex, x2[i:j + 1])
+        ]
+
+        return np.sum([
+            1 if x1s == x2s else 0
+            for x1s in x1ss
+            for x2s in x2ss
+        ])
 
 
 """
@@ -391,6 +430,68 @@ def Constant(c, c_bounds=(0, np.inf)):
             return (self.c_bounds,)
 
     return ConstantKernel(c, c_bounds)
+
+
+def KroneckerDelta(h=0, h_bounds=(1e-3, 1)):
+    r"""Creates a Kronecker delta kernel that returns either h or 1 depending
+    on whether two objects compare equal, i.e. :math:`k_\delta(i, j) =
+    \begin{cases} 1, i = j \\ h, otherwise \end{cases}`
+
+    Parameters
+    ----------
+    h: float in (0, 1)
+        The value of the kernel when two objects do not compare equal
+
+    Returns
+    -------
+    BaseKernel
+        A kernel instance of corresponding behavior
+    """
+
+    # only works with python >= 3.6
+    # @cpptype(lo=np.float32, hi=np.float32)
+    # @cpptype([('h', np.float32)])
+    class KroneckerDeltaKernel(BaseKernel):
+
+        def __init__(self, h, h_bounds):
+            self.h = float(h)
+            self.h_bounds = h_bounds
+
+        def __call__(self, i, j, jac=False):
+            if jac is True:
+                return 1.0 if i == j else self.h, [0.0 if i == j else 1.0]
+            else:
+                return 1.0 if i == j else self.h
+
+        def __repr__(self):
+            # return f'KroneckerDelta({self.h})'
+            return 'KroneckerDelta({})'.format(self.h)
+
+        def gen_expr(self, x, y, jac=False, theta_prefix=''):
+            # f = f'({x} == {y} ? 1.0f : {theta_prefix}h)'
+            f = '({} == {} ? 1.0f : {}h)'.format(x, y, theta_prefix)
+            if jac is True:
+                # return f, [f'({x} == {y} ? 0.0f : 1.0f)']
+                return f, ['({} == {} ? 0.0f : 1.0f)'.format(x, y)]
+            else:
+                return f
+
+        @property
+        def theta(self):
+            return namedtuple(
+                'KroneckerDeltaHyperparameters',
+                ['h']
+            )(self.h)
+
+        @theta.setter
+        def theta(self, seq):
+            self.h = seq[0]
+
+        @property
+        def bounds(self):
+            return (self.h_bounds,)
+
+    return KroneckerDeltaKernel(h, h_bounds)
 
 
 SquaredExponential = BaseKernel.create(

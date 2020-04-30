@@ -1,10 +1,41 @@
 """
 This module endows BaseKernels with GPflow interoperability via duck typing.
 """
+from kernelbridge.basekernel import BaseKernel
+
+import numpy as np
 import tensorflow as tf
 
 
-class GPflowKernel():
+class GPflowKernel(BaseKernel):
+
+    def __init__(self, kernel, active_dims=None):
+        self._kernel = kernel
+    
+    def __call__(self, x1, x2=None, *, full_cov=True, presliced=False):
+        """
+        Wrapper for __call__ method interoperable with GPflow models
+        """
+        if (not full_cov) and (x2 is not None):
+            raise ValueError(
+                "Computing kernel on two elements requires full covariance.")
+
+        if not hasattr(x1, "len"):
+            return self._kernel(x1, x2)
+
+        elif not full_cov:
+            assert x2 is None
+            return tf.fill(tf.shape(x1)[:-1], tf.squeeze(1.0))
+
+        else:
+            res = np.zeros((len(x1), len(x2)))
+            for i, x1i in enumerate(x1):
+                for j, x2j in enumerate(x2):
+                    res[i][j] = self._kernel(x1i[0], x2j[0])
+            return res
+
+
+class BadGPflowKernel(BaseKernel):
 
     def __init__(self, kernel, active_dims=None):
         self._name = kernel.__name__
@@ -96,26 +127,26 @@ class GPflowKernel():
 
     @property
     def parameters(self):
-        return self.state
+        return self.state # pylint: disable=no-member
 
     @property
     def trainable_parameters(self):
-        return self.state
+        return self.state # pylint: disable=no-member
 
     def __call__(self, x1, x2=None, *, full_cov=True, presliced=False):
         """
         Wrapper for __call__ method interoperable with GPflow models
         """
-        if (not full_cov) and (X2 is not None):
+        if (not full_cov) and (x2 is not None):
             raise ValueError(
                 "Computing kernel on two elements requires full covariance.")
 
-        # if not presliced:
-        #     x1, x2 = self.slice(x1, x2)
+        if not presliced:
+            x1, x2 = self.slice(x1, x2)
 
-        if not x2:
-            assert full_cov
-            return self._kernel(x1, x1)
+        if not full_cov:
+            assert x2 is None
+            return np.array([self._kernel(x1i, x1i) for x1i in x1])
 
         else:
-            return self._kernel(x1, x2)
+            return np.array([self._kernel(xi[0], xi[1]) for xi in zip(x1, x2)])
