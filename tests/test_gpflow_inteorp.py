@@ -29,8 +29,8 @@ def test_compute(k):
 def test_regression(k):
     k = GPflowKernel(k)
 
-    X = np.array([0.1, 0.3, 0.4, 0.7]).reshape(-1, 1)
-    Y = np.array([3.3, 3.7, 4.0, 9.1]).reshape(-1, 1)
+    X = np.array([0.1, 0.3, 0.4, 0.7])#.reshape(-1, 1)
+    Y = np.array([3.3, 3.7, 4.0, 9.1])#.reshape(-1, 1)
 
     m = gpflow.models.GPR(data=(X, Y), kernel=k, mean_function=None)
     

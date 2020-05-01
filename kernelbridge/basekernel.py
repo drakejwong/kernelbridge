@@ -6,6 +6,7 @@ Heavily inspired by GraphDot (Yu-Hang Tang).
 """
 
 from collections import namedtuple, OrderedDict
+from collections.abc import Iterable
 import numpy as np
 import sympy as sy
 from sympy.utilities.lambdify import lambdify
@@ -115,7 +116,7 @@ class BaseKernel:
                             )
 
                     try:
-                        values[symbol] = kwargs['%s_bounds' % symbol]
+                        bounds[symbol] = kwargs['%s_bounds' % symbol]
                     except KeyError:
                         try:
                             bounds[symbol] = self._hypers[symbol]['bounds']
@@ -176,12 +177,23 @@ class BaseKernel:
                     f"{t}={v}"
                     for t, v in self._theta_values.items()
                 ]
+                if len(theta) == 1:
+                    theta = theta[0]
+                else:
+                    theta = ", ".join(theta)
+
                 bounds = [
                     f"{t}_bounds={v}"
                     for t, v in self._theta_bounds.items()
                 ]
+                if not bounds:
+                    bounds = ""
+                elif len(bounds) == 1:
+                    bounds = ", " + bounds[0]
+                else:
+                    bounds = ", ".join([""] + bounds)
 
-                return f"{cls}({theta}, {bounds})"
+                return f"{cls}({theta + bounds})"
 
             def __str__(self):
                 return repr(self)
@@ -270,26 +282,60 @@ class Composition(BaseKernel):
     Parent class for kernel operations.
     Inspired by GPflow architecture.
 
-    TODO: storing thetas (hypers) for each kernel
     TODO: composing Composition kernels with other kernels--extend list
     """
 
     def __init__(self, *kernels):
-        self._kernels = list(kernels[0])  # need better parse *args
+        self._kernels = []
+        for k in kernels:
+            if isinstance(k, Iterable):
+                self._kernels.extend(k)
+            else:
+                self._kernels.append(k)
+    
+    @property
+    def theta(self):
+        return tuple([k.theta for k in self._kernels])
+
+    @theta.setter
+    def theta(self, *seqs):
+        if len(seqs) == 1:
+            seqs = seqs[0]
+
+        assert(len(seqs) == len(self._kernels))
+
+        for k, seq in zip(self._kernels, seqs):
+            k.theta = seq
+
+    @property
+    def bounds(self):
+        return tuple([k.bounds for k in self._kernels])
 
     def __repr__(self):
         cls = self.__name__  # pylint: disable=no-member
-        names = ", ".join([f"{ker.__name__}" for ker in self._kernels])
+        names = [f"{repr(k)}" for k in self._kernels]
+        if len(names) > 1:
+            names = ", ".join(names)
 
         return f"{cls}({names})"
 
     def __str__(self):
         if not hasattr(self, "_opstr"):
             return repr(self)
-        return f"{self._opstr.join(self._kernels)}" # pylint: disable=no-member
+
+        names = [f"{repr(k)}" for k in self._kernels]
+        if len(names) > 1:
+            names = self._opstr.join(names) # pylint: disable=no-member
+
+        return f"{names}" # pylint: disable=no-member
 
     def __call__(self, x1, x2, jac=False):
-        return self._agg([ker(x1, x2, jac) for ker in self._kernels])
+        ret = self._agg([ker(x1, x2) for ker in self._kernels])
+        if jac:
+            return ret, self._agg([ker(x1, x2, jac=True)[1] for ker in self._kernels])
+        else:
+            return ret
+
 
     @property
     @abc.abstractmethod
@@ -303,7 +349,7 @@ class Sum(Composition):
     """
 
     def __init__(self, *kernels):
-        self.__name__ = "SumKernel"
+        self.__name__ = "Sum"
         self._desc = "Composition of kernels via addition"
         self._opstr = " + "
         super().__init__(kernels)
@@ -319,7 +365,7 @@ class Product(Composition):
     """
 
     def __init__(self, *kernels):
-        self.__name__ = "ProductKernel"
+        self.__name__ = "Product"
         self._desc = "Composition of kernels via multiplication"
         self._opstr = " * "
         super().__init__(kernels)
@@ -341,30 +387,39 @@ class RConvolution(Composition):
     """
 
     def __init__(self, regex):
-        self.__name__ = "RConvolutionKernel"
+        self.__name__ = "RConvolution"
         self._desc = "R-convolution"
-        self._kernels = None
         self._regex = regex
+        # TODO _kernels dict {feature:kernel} / port to Convolution
+        super().__init__(KroneckerDelta())
     
     def __call__(self, x1, x2):
         x1ss = [
             x1[i:j + 1]
             for i in range(len(x1))
             for j in range(i, len(x1))
-            if re.search(self._regex, x1[i:j + 1])
+            if re.fullmatch(self._regex, x1[i:j + 1])
         ]
         x2ss = [
             x2[i:j + 1]
             for i in range(len(x2))
             for j in range(i, len(x2))
-            if re.search(self._regex, x2[i:j + 1])
+            if re.fullmatch(self._regex, x2[i:j + 1])
         ]
 
         return np.sum([
-            1 if x1s == x2s else 0
+            self._kernels[0](x1s, x2s)
             for x1s in x1ss
             for x2s in x2ss
         ])
+    
+    # TODO
+    def __repr__(self):
+        pass
+
+    # TODO
+    def __str__(self):
+        pass
 
 
 """
@@ -397,19 +452,17 @@ def Constant(c, c_bounds=(0, np.inf)):
             self.c_bounds = c_bounds
 
         def __call__(self, i, j, jac=False):
-            if jac is True:
+            if jac:
                 return self.c, [1.0]
             else:
                 return self.c
 
         def __repr__(self):
-            # return f'Constant({self.c})'
-            return 'Constant({})'.format(self.c)
+            return f'Constant({self.c})'
 
         def gen_expr(self, x, y, jac=False, theta_prefix=''):
-            # f = f'{theta_prefix}c'
-            f = '{}c'.format(theta_prefix)
-            if jac is True:
+            f = f'{theta_prefix}c'
+            if jac:
                 return f, ['1.0f']
             else:
                 return f
@@ -457,11 +510,12 @@ def KroneckerDelta(h=0, h_bounds=(1e-3, 1)):
             self.h = float(h)
             self.h_bounds = h_bounds
 
-        def __call__(self, i, j, jac=False):
-            if jac is True:
-                return 1.0 if i == j else self.h, [0.0 if i == j else 1.0]
+        def __call__(self, x1, x2, jac=False):
+            ret = 1.0 if x1 == x2 else self.h
+            if jac:
+                return ret, [0.0 if x1 == x2 else 1.0]
             else:
-                return 1.0 if i == j else self.h
+                return ret
 
         def __repr__(self):
             # return f'KroneckerDelta({self.h})'
