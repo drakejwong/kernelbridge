@@ -393,25 +393,34 @@ class RConvolution(Composition):
         # TODO _kernels dict {feature:kernel} / port to Convolution
         super().__init__(KroneckerDelta())
     
-    def __call__(self, x1, x2):
-        x1ss = [
-            x1[i:j + 1]
-            for i in range(len(x1))
-            for j in range(i, len(x1))
-            if re.fullmatch(self._regex, x1[i:j + 1])
-        ]
-        x2ss = [
-            x2[i:j + 1]
-            for i in range(len(x2))
-            for j in range(i, len(x2))
-            if re.fullmatch(self._regex, x2[i:j + 1])
-        ]
+    def __call__(self, X1, X2):
 
-        return np.sum([
-            self._kernels[0](x1s, x2s)
-            for x1s in x1ss
-            for x2s in x2ss
-        ])
+        # x1[0] vs. x2[0]  x1[0] vs. x2[1] ..
+        # x1[1] vs. x2[0]
+
+        K = np.zeros((len(X1), len(X2)))
+        for a, x1 in enumerate(X1):
+            for b, x2 in enumerate(X2):
+                x1ss = [
+                    x1[i:j + 1]
+                    for i in range(len(x1))
+                    for j in range(i, len(x1))
+                    if re.fullmatch(self._regex, x1[i:j + 1])
+                ]
+                x2ss = [
+                    x2[i:j + 1]
+                    for i in range(len(x2))
+                    for j in range(i, len(x2))
+                    if re.fullmatch(self._regex, x2[i:j + 1])
+                ]
+
+                K[a][b] = np.sum([
+                    self._kernels[0](x1s, x2s)
+                    for x1s in x1ss
+                    for x2s in x2ss
+                ])
+        
+        return K
     
     # TODO
     def __repr__(self):
