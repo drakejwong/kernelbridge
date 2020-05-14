@@ -20,7 +20,7 @@ class GPflowKernel(BaseKernel):
             raise ValueError(
                 "Computing kernel on two elements requires full covariance.")
 
-        if not hasattr(x1, "len"):
+        if not hasattr(x1, "__len__"):
             return self._kernel(x1, x2)
 
         elif not full_cov:

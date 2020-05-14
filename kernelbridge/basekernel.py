@@ -352,7 +352,14 @@ class Sum(Composition):
         self.__name__ = "Sum"
         self._desc = "Composition of kernels via addition"
         self._opstr = " + "
-        super().__init__(kernels)
+        self._kernels = []
+        for k in kernels:
+            if isinstance(k, Iterable):
+                self._kernels.extend(k)
+            elif isinstance(k, Sum):
+                self._kernels.extend(k._kernels)
+            else:
+                self._kernels.append(k)
 
     @property
     def _agg(self):
@@ -368,7 +375,14 @@ class Product(Composition):
         self.__name__ = "Product"
         self._desc = "Composition of kernels via multiplication"
         self._opstr = " * "
-        super().__init__(kernels)
+        self._kernels = []
+        for k in kernels:
+            if isinstance(k, Iterable):
+                self._kernels.extend(k)
+            elif isinstance(k, Product):
+                self._kernels.extend(k._kernels)
+            else:
+                self._kernels.append(k)
 
     @property
     def _agg(self):
