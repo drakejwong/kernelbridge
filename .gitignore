@@ -47,6 +47,10 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# TravisCI
+[#]1[#]input.txt
+input.txt
+
 # Translations
 *.mo
 *.pot
