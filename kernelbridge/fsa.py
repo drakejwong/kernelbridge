@@ -1,5 +1,5 @@
 from __future__ import annotations
-from collections import defaultdict
+from collections import defaultdict as ddict
 
 from ply import lex
 from ply import yacc
@@ -13,61 +13,82 @@ class RegExError(Exception): pass
 
 class State():
     r"""
-    State for FSA.
-    Houses transitions/edges to other States and whether or not State is accepting.
-    Transition to another State by calling a State object on a character.
+    State within Finite State Automaton.
+    Hashable object for FSA set/dict attributes.
+    Maintains whether or not State is accepting.
     """
+    # r"""
+    # State for FSA.
+    # Houses transitions/edges to other States and whether or not State is accepting.
+    # Transition to another State by calling a State object on a character.
+    # """
 
-    def __init__(self, accept:bool=False):
-        self.trans = defaultdict(set)
+    def __init__(self, accept:bool=False, name:str=None):
         self.accept = accept
+        self.name = name
     
-    def __call__(self, c:str):
-        return self.trans.get(c, {})
+    # def __call__(self, c:str):
+    #     return self.trans.get(c, {})
     
     def __repr__(self):
-        return str(hash(self))[-2:] + repr(list(self.trans.keys()))
+        # return str(hash(self))[-2:] + repr(list(self.trans.keys()))
+        if self.name:
+            return self.name
+        else:
+            return str(hash(self))[-2:]
     
     def __str__(self):
-        # return repr(self)
-        ret = ""
-        for e, s1 in self.trans.items():
-            ret += f"{repr(self)}-{e}->{s1}"
-        return ret[1:]
+        return repr(self)
+        # ret = ""
+        # for e, s1 in self.trans.items():
+        #     ret += f"{repr(self)}-{e}->{s1}"
+        # return ret[1:]
     
-    def add_trans(self, s:State, c:str):
-        if len(c) > 1:
-            raise Exception(f"Attempted to add ambiguous transition '{c}'")
-        # elif c in self.trans:
-        #     raise Exception(f"Transition {c} already exists for state {s}")
-        else:
-            self.trans[c].add(s)
+    # def add_trans(self, s:State, c:str):
+    #     if len(c) > 1:
+    #         raise Exception(f"Attempted to add ambiguous transition '{c}'")
+    #     # elif c in self.trans:
+    #     #     raise Exception(f"Transition {c} already exists for state {s}")
+    #     else:
+    #         self.trans[c].add(s)
 
 
 class FiniteAutomaton():
 
     def __init__(self):
         self._q0 = State()
-        self._Q = {self.q0}
+        # self._Q = {self.q0}
         self._F = set()
-        self._Sigma = set()
+        self._Sigma = ddict(lambda: ddict(set))
+        self._Sigma[self.q0]
     
     def __call__(self, inp:str) -> bool:
-        def dfs(s:State, p:str) -> bool:
-            print(s, p)
-            if not s: return False
-            if not p:
-                if s.accept: return True
-                return any([child.accept for child in s("ϵ")])
-            return any(
-                [dfs(child, p[1:]) for child in s(p[0])] +
-                [dfs(child, p) for child in s("ϵ")]
-            )
-        return dfs(self.q0, inp)
+        r"""
+        Reads input string and returns resulting final state.
+        """
+
+        curr = {self.q0}
+        for c in inp:
+            for s in curr:
+                curr = self.transition(s, c)
+                if curr: break
+            if not curr: return None
+        return curr
+
+        # def dfs(s:State, p:str) -> bool:
+        #     print(s, p)
+        #     if not s: return False
+        #     if not p:
+        #         if s.accept: return True
+        #         return any([child.accept for child in s("")])
+        #     return any(
+        #         [dfs(child, p[1:]) for child in s(p[0])] +
+        #         [dfs(child, p) for child in s("")]
+        #     )
+        # return dfs(self.q0, inp)
     
-    def __repr__(self):
-        # return repr(self.q0) + repr(self.Q) + repr(self.F)
-        return "; ".join([str(s) for s in self.Q])
+    def __str__(self):
+        return str({k: dict(v) for k, v in self.Sigma.items()})
     
     @property
     def q0(self):
@@ -75,20 +96,65 @@ class FiniteAutomaton():
     
     @q0.setter
     def q0(self, s:State):
-        self._Q.add(s)
+        # self._Q.add(s)
         self._q0 = s
     
     @property
     def Q(self):
-        return self._Q
+        r"""
+        Enumerates all states of the FSA (source nodes of Sigma).
+        """
+        return self.Sigma.keys()
     
     @property
     def F(self):
+        r"""
+        Enumerates all accepting states of the FSA.
+        """
         return self._F
+
+        # ### Manual enumeration from Sigma
+        # if not hasattr(self, "_F_cached"):
+        #     self._F_cached = set()
+        #     for state, d in self.Sigma:
+        #         for t, ss in self.Sigma[state]:
+        #             for s in ss:
+        #                 if s.accept:
+        #                     self._F_cached.add(s)
+        # return self._F_cached
     
     @property
     def Sigma(self):
+        r"""
+        Dict-of-dicts for state transitions of the FSA.
+        """
         return self._Sigma
+    
+    def transition(self, s:State, c:str):
+        r"""
+        Evaluates a single character transition from a given state,
+        returning a corresponding set of destination states.
+        """
+        if s in self.Sigma:
+            if c in self.Sigma[s]:
+                return self.Sigma[s][c]
+            elif "" in self.Sigma[s]:
+                ret = set()
+                for s2 in self.transition(s, ""):
+                    ret = ret.union(self.transition(s2, c))
+                return ret
+        return set()
+    
+    def epsilon_closure(self, s:State) -> set:
+        r"""
+        Enumerates the ϵ-closure of a state (all states reachable via
+        any number ϵ-transitions, i.e. ϵ*).
+        """
+        ret = self.transition(s, "")
+        if not ret: return {}
+        for ss in [self.epsilon_closure(state) for state in ret]:
+            ret = ret.union(ss)
+        return ret
 
     def update_accept(self, s:State, a:bool):
         s.accept = a
@@ -98,58 +164,83 @@ class FiniteAutomaton():
             self._F.remove(s)
     
     def update_transition(self, s1:State, s2:State, c:str):
-        if c in {"ep", "epsilon", "Epsilon"}:
-            c = "ϵ"
-        self._Q.add(s1)
+        r"""
+        Updates/adds a single-char transition between two states.
+        States are added to the FSA's Q and F as necessary.
+        """
+        if c in {"ϵ", "ep", "epsilon", "Epsilon"}:
+            c = ""
+
+        self._Sigma[s1][c].add(s2)
+        # self._Q.add(s1)
         if s1.accept: self._F.add(s1)
-        self._Q.add(s2)
+        # self._Q.add(s2)
         if s2.accept: self._F.add(s2)
-        self._Sigma.add(c)
-        s1.add_trans(s2, c)
     
-    def incorporate(self, other:FiniteAutomaton):
-        self._Q = self._Q.union(other.Q)
-        self._Sigma = self._Sigma.union(other.Sigma)
-        self._F = self._F.union(other.F)
+    def accepts(self, inp:str) -> bool:
+        final = self(inp)
+        if not final: return False
+        for ss in [self.epsilon_closure(s) for s in final]:
+            final = final.union(ss)
+        return False if not final.intersection(self.F) else True
+        # return (
+        #     final.accept or
+        #     any([s.accept for s in self.epsilon_closure(final)])
+        # )
+
+
+class NFA(FiniteAutomaton):
+    def __init__(self):
+        super().__init__()
+    
+    def __str__(self):
+        return super().__str__()
+    
+    def incorporate(self, other:NFA):
+        for s, d in other.Sigma.items():
+            for t, ss in d.items():
+                self._Sigma[s][t] = self.Sigma[s][t].union(ss)
+        # self._Q = self._Q.union(other.Q)
+        self._F = self.F.union(other.F)
 
     @staticmethod
     def concat(*M):
         r"""
-        iteratively adds ϵ-transition from end state of prev to start state of curr,
-        removing acceptance from end state of prev
+        Iteratively adds ϵ-transition from end state of prev to start state
+        of curr, removing acceptance from end state of prev.
         """
         ret = M[0]
         for m in M[1:]:
             for qf in list(ret.F):
-                m.update_transition(qf, m.q0, "ep")
+                m.update_transition(qf, m.q0, "")
                 ret.update_accept(qf, False)
-            ret.incorporate(m) # union Q, F, Sigma
+            ret.incorporate(m)
         return ret
     
     @staticmethod
     def union(*M):
         r"""
-        adds ϵ-transition from new start state
-        to start states of each machine in input
+        Adds ϵ-transition from new start state to start states of each
+        machine in input.
         """
-        ret = FiniteAutomaton()
+        ret = NFA()
         for m in M:
-            ret.update_transition(ret.q0, m.q0, "ep")
+            ret.update_transition(ret.q0, m.q0, "")
             ret.incorporate(m)
         return ret
     
     @staticmethod
-    def kleene(m:FiniteAutomaton):
+    def kleene(m:NFA):
         r"""
-        adds ϵ-transition from end to start, and from new start to old start.
-        removes acceptance from end, adds acceptance to old start.
+        Adds ϵ-transition from end to start, and from new start to old start.
+        Removes acceptance from end, adds acceptance to old start.
         """
         for qf in list(m.F):
-            m.update_transition(qf, m.q0, "ep")
+            m.update_transition(qf, m.q0, "")
             m.update_accept(qf, False)
         m.update_accept(m.q0, True)
         start = State()
-        m.update_transition(start, m.q0, "ep")
+        m.update_transition(start, m.q0, "")
         m.q0 = start
         return m
 
@@ -170,8 +261,10 @@ tokens = [
 
 t_LPAREN = r"\("
 t_RPAREN = r"\)"
-t_UNION = r"\|"
+t_ONEPLUS = r"\+"
+t_ZEROONE = r"\?"
 t_KLEENE = r"\*"
+t_UNION = r"\|"
 t_CHAR = r"[a-zA-Z]"
 
 def t_error(t):
@@ -190,8 +283,8 @@ precedence = (
     ("left", "KLEENE", "ONEPLUS", "ZEROONE"),
 )
 
-my_pattern = "ab*"
-my_test = "a"
+my_pattern = "c?(a|b)*"
+my_test = "ccaba"
 
 def p_start(p):
     """
@@ -199,9 +292,10 @@ def p_start(p):
           | empty
     """
     ret = run(p[1])
-    print(ret)
-    print(ret.F)
-    print(ret(my_test))
+    # print(ret)
+    # print(ret.F)
+    # print(ret(my_test))
+    print(ret.accepts(my_test))
 
 def p_expression(p):
     """
@@ -260,23 +354,23 @@ def p_error(p):
 def run(p):
     if isinstance(p, tuple):
         if p[0] == "*":
-            return FiniteAutomaton.kleene(run(p[1]))
+            return NFA.kleene(run(p[1]))
         elif p[0] == "|":
-            return FiniteAutomaton.union(run(p[1]), run(p[2]))
+            return NFA.union(run(p[1]), run(p[2]))
         elif p[0] == "concat":
-            return FiniteAutomaton.concat(run(p[1]), run(p[2]))
+            return NFA.concat(run(p[1]), run(p[2]))
     else:
-        ret = FiniteAutomaton()
+        ret = NFA()
         ret.update_transition(ret.q0, State(True), p)
         return ret
 
 parser = yacc.yacc()
 
-# while True:
-#     try:
-#         s = input("regex: ")
-#     except EOFError:
-#         break
-#     parser.parse(s, lexer=lexer)
+# # while True:
+# #     try:
+# #         s = input("regex: ")
+# #     except EOFError:
+# #         break
+# #     parser.parse(s, lexer=lexer)
 
 my_fsa = parser.parse(my_pattern, lexer=lexer)
