@@ -17,21 +17,11 @@ class State():
     Hashable object for FSA set/dict attributes.
     Maintains whether or not State is accepting.
     """
-    # r"""
-    # State for FSA.
-    # Houses transitions/edges to other States and whether or not State is accepting.
-    # Transition to another State by calling a State object on a character.
-    # """
-
     def __init__(self, accept:bool=False, name:str=None):
         self.accept = accept
         self.name = name
-    
-    # def __call__(self, c:str):
-    #     return self.trans.get(c, {})
-    
+        
     def __repr__(self):
-        # return str(hash(self))[-2:] + repr(list(self.trans.keys()))
         if self.name:
             return self.name
         else:
@@ -39,28 +29,21 @@ class State():
     
     def __str__(self):
         return repr(self)
-        # ret = ""
-        # for e, s1 in self.trans.items():
-        #     ret += f"{repr(self)}-{e}->{s1}"
-        # return ret[1:]
-    
-    # def add_trans(self, s:State, c:str):
-    #     if len(c) > 1:
-    #         raise Exception(f"Attempted to add ambiguous transition '{c}'")
-    #     # elif c in self.trans:
-    #     #     raise Exception(f"Transition {c} already exists for state {s}")
-    #     else:
-    #         self.trans[c].add(s)
+
+    def copy(self):
+        return State(self.accept, self.name)
 
 
 class FiniteAutomaton():
 
-    def __init__(self):
-        self._q0 = State()
-        # self._Q = {self.q0}
-        self._F = set()
-        self._Sigma = ddict(lambda: ddict(set))
-        self._Sigma[self.q0]
+    def __init__(self, q0=State(), F=set(), Sigma=None):
+        self._q0 = q0.copy()
+        self._F = F.copy()
+        if not Sigma:
+            self._Sigma = ddict(lambda: ddict(set))
+            self._Sigma[self.q0]
+        else:
+            self._Sigma = Sigma.copy()
     
     def __call__(self, inp:str) -> bool:
         r"""
@@ -74,18 +57,6 @@ class FiniteAutomaton():
                 if curr: break
             if not curr: return None
         return curr
-
-        # def dfs(s:State, p:str) -> bool:
-        #     print(s, p)
-        #     if not s: return False
-        #     if not p:
-        #         if s.accept: return True
-        #         return any([child.accept for child in s("")])
-        #     return any(
-        #         [dfs(child, p[1:]) for child in s(p[0])] +
-        #         [dfs(child, p) for child in s("")]
-        #     )
-        # return dfs(self.q0, inp)
     
     def __str__(self):
         return str({k: dict(v) for k, v in self.Sigma.items()})
@@ -157,6 +128,9 @@ class FiniteAutomaton():
         return ret
 
     def update_accept(self, s:State, a:bool):
+        r"""
+        Updates acceptance of State and adds/removes from F accordingly
+        """
         s.accept = a
         if a:
             self._F.add(s)
@@ -172,9 +146,7 @@ class FiniteAutomaton():
             c = ""
 
         self._Sigma[s1][c].add(s2)
-        # self._Q.add(s1)
         if s1.accept: self._F.add(s1)
-        # self._Q.add(s2)
         if s2.accept: self._F.add(s2)
     
     def accepts(self, inp:str) -> bool:
@@ -183,15 +155,11 @@ class FiniteAutomaton():
         for ss in [self.epsilon_closure(s) for s in final]:
             final = final.union(ss)
         return False if not final.intersection(self.F) else True
-        # return (
-        #     final.accept or
-        #     any([s.accept for s in self.epsilon_closure(final)])
-        # )
 
 
 class NFA(FiniteAutomaton):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, q0=State(), F=set(), Sigma=None):
+        super().__init__(q0, F, Sigma)
     
     def __str__(self):
         return super().__str__()
@@ -200,7 +168,6 @@ class NFA(FiniteAutomaton):
         for s, d in other.Sigma.items():
             for t, ss in d.items():
                 self._Sigma[s][t] = self.Sigma[s][t].union(ss)
-        # self._Q = self._Q.union(other.Q)
         self._F = self.F.union(other.F)
 
     @staticmethod
@@ -283,7 +250,7 @@ precedence = (
     ("left", "KLEENE", "ONEPLUS", "ZEROONE"),
 )
 
-my_pattern = "c?(a|b)*"
+my_pattern = "c?c?(a|b)*"
 my_test = "ccaba"
 
 def p_start(p):
