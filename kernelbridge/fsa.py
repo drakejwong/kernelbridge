@@ -1,5 +1,8 @@
 from __future__ import annotations
+from abc import abstractmethod
+
 from collections import defaultdict as ddict
+from collections import deque
 
 from ply import lex
 from ply import yacc
@@ -25,19 +28,37 @@ class State():
         if self.name:
             return self.name
         else:
-            return str(hash(self))[-2:]
+            return str(hash(self))[-3:]
     
     def __str__(self):
         return repr(self)
+    
+    def __cmp__(self, other:S) -> bool:
+        if self.accept != other.accept:
+            return False
+        if self.name != other.name:
+            return False
+        return True
+    
+    def __gt__(self, other:S) -> bool:
+        return str(self) > str(other)
+    
+    def __lt__(self, other:S) -> bool:
+        return str(self) < str(other)
+    
+    def __ge__(self, other:S) -> bool:
+        return str(self) >= str(other)
+    
+    def __le__(self, other:S) -> bool:
+        return str(self) <= str(other)
 
     def copy(self):
         return State(self.accept, self.name)
 
 
 class FiniteAutomaton():
-
     def __init__(self, q0=State(), F=set(), Sigma=None):
-        self._q0 = q0.copy()
+        self._q0 = q0
         self._F = F.copy()
         if not Sigma:
             self._Sigma = ddict(lambda: ddict(set))
@@ -45,18 +66,12 @@ class FiniteAutomaton():
         else:
             self._Sigma = Sigma.copy()
     
+    @abstractmethod
     def __call__(self, inp:str) -> bool:
         r"""
         Reads input string and returns resulting final state.
         """
-
-        curr = {self.q0}
-        for c in inp:
-            for s in curr:
-                curr = self.transition(s, c)
-                if curr: break
-            if not curr: return None
-        return curr
+        raise NotImplementedError(NotImplemented)
     
     def __str__(self):
         return str({k: dict(v) for k, v in self.Sigma.items()})
@@ -101,11 +116,62 @@ class FiniteAutomaton():
         """
         return self._Sigma
     
+    @abstractmethod
     def transition(self, s:State, c:str):
         r"""
         Evaluates a single character transition from a given state,
         returning a corresponding set of destination states.
         """
+        raise NotImplementedError(NotImplemented)
+
+    def update_accept(self, s:State, a:bool):
+        r"""
+        Updates acceptance of State and adds/removes from F accordingly.
+        """
+        s.accept = a
+        if a:
+            self._F.add(s)
+        elif not a and s in self.F:
+            self._F.remove(s)
+    
+    @abstractmethod
+    def update_transition(self, s1:State, s2:State, c:str):
+        r"""
+        Updates/adds a single-char transition between two states.
+        States are added to the FSA's F as necessary.
+        """
+        raise NotImplementedError(NotImplemented)
+    
+    @abstractmethod
+    def accepts(self, inp:str) -> bool:
+        r"""
+        Determines whether or not the FSA accepts a given input.
+        """
+        raise NotImplementedError(NotImplemented)
+
+
+class NFA(FiniteAutomaton):
+    def __init__(self, q0=State(), F=set(), Sigma=None):
+        super().__init__(q0.copy(), F, Sigma)
+
+    def __call__(self, inp:str) -> bool:
+        curr = {self.q0}
+        for c in inp:
+            for s in curr:
+                curr = self.transition(s, c)
+                if curr: break
+            if not curr: return None
+        return curr
+    
+    def update_transition(self, s1:State, s2:State, c:str):
+        if c in {"ϵ", "ep", "epsilon", "Epsilon"}:
+            c = ""
+
+        self._Sigma[s1][c].add(s2)
+        if s1.accept: self._F.add(s1)
+        if s2.accept: self._F.add(s2)
+
+    def transition(self, s:State, c:str):
         if s in self.Sigma:
             if c in self.Sigma[s]:
                 return self.Sigma[s][c]
@@ -116,53 +182,19 @@ class FiniteAutomaton():
                 return ret
         return set()
     
-    def epsilon_closure(self, s:State) -> set:
+    def epsilon_closure(self, s:State, include:bool=False) -> set:
         r"""
         Enumerates the ϵ-closure of a state (all states reachable via
-        any number ϵ-transitions, i.e. ϵ*).
+        any number ϵ-transitions, i.e. ϵ*). Excludes given state.
         """
         ret = self.transition(s, "")
         if not ret: return {}
         for ss in [self.epsilon_closure(state) for state in ret]:
             ret = ret.union(ss)
-        return ret
-
-    def update_accept(self, s:State, a:bool):
-        r"""
-        Updates acceptance of State and adds/removes from F accordingly
-        """
-        s.accept = a
-        if a:
-            self._F.add(s)
-        elif not a and s in self.F:
-            self._F.remove(s)
-    
-    def update_transition(self, s1:State, s2:State, c:str):
-        r"""
-        Updates/adds a single-char transition between two states.
-        States are added to the FSA's Q and F as necessary.
-        """
-        if c in {"ϵ", "ep", "epsilon", "Epsilon"}:
-            c = ""
-
-        self._Sigma[s1][c].add(s2)
-        if s1.accept: self._F.add(s1)
-        if s2.accept: self._F.add(s2)
-    
-    def accepts(self, inp:str) -> bool:
-        final = self(inp)
-        if not final: return False
-        for ss in [self.epsilon_closure(s) for s in final]:
-            final = final.union(ss)
-        return False if not final.intersection(self.F) else True
-
-
-class NFA(FiniteAutomaton):
-    def __init__(self, q0=State(), F=set(), Sigma=None):
-        super().__init__(q0, F, Sigma)
-    
-    def __str__(self):
-        return super().__str__()
+        if not include:
+            return ret
+        else:
+            return ret.union({s})
     
     def incorporate(self, other:NFA):
         for s, d in other.Sigma.items():
@@ -210,6 +242,99 @@ class NFA(FiniteAutomaton):
         m.update_transition(start, m.q0, "")
         m.q0 = start
         return m
+    
+    def accepts(self, inp:str) -> bool:
+        final = self(inp)
+        if not final: return False
+        for ss in [self.epsilon_closure(s) for s in final]:
+            final = final.union(ss)
+        return False if not final.intersection(self.F) else True
+
+    def to_dfa(self) -> DFA:
+        nfa_eq0_set = self.epsilon_closure(self.q0, include=True)
+        nfa_eq0_list = sorted(list(nfa_eq0_set))
+        dfa_q0 = State(
+            accept = nfa_eq0_set.intersection(self.F),
+            name = "0"
+        )
+        dfa_F = set()
+        dfa_Sigma = ddict(dict)
+        dfa_states = {dfa_q0.name: [dfa_q0, False]}
+        ct = 1
+
+        state_queue = deque()
+        state_queue.append((dfa_q0.name, nfa_eq0_set, nfa_eq0_list))
+        while state_queue:
+            source_key, source_set, source_list = state_queue.popleft()
+            source_dfa, visited = dfa_states[source_key]
+            
+            if visited: continue
+            
+            for u in source_list:
+                dest_set = set()
+                for t, v_set in self.Sigma[u].items():
+                    if t == "" or t in dfa_Sigma[source_dfa]: continue
+
+                    for v in v_set:
+                        dest_set = dest_set.union(self.epsilon_closure((v), include=True))
+                    dest_list = sorted(list(dest_set))
+                    dest_key = "_".join(map(str, dest_list))
+                    if dest_key not in dfa_states:
+                        dfa_states[dest_key] = [
+                            State(
+                                accept = dest_set.intersection(self.F),
+                                name = str(ct)
+                            ),
+                            False
+                        ]
+                        ct += 1
+                    dest_dfa = dfa_states[dest_key][0]
+
+                    if source_dfa.accept: # redundant to add state to F as source/dest?
+                        dfa_F.add(source_dfa)
+                    if dest_dfa.accept:
+                        dfa_F.add(dest_dfa)
+                    dfa_Sigma[source_dfa][t] = dest_dfa
+
+                    state_queue.append((dest_key, dest_set, dest_list))
+
+            dfa_states[source_key][1] = True
+        return DFA(dfa_q0, dfa_F, dfa_Sigma)
+
+
+class DFA(FiniteAutomaton):
+    def __init__(self, q0=State(), F=set(), Sigma=ddict(dict)):
+        super().__init__(q0, F, Sigma)
+
+    def __call__(self, inp:str) -> bool:
+        curr = self.q0
+        for c in inp:
+            curr = self.transition(curr, c)
+            if not curr: return
+        return curr
+    
+    def __str__(self):
+        return super().__str__()
+    
+    def update_transition(self, s1:State, s2:State, c:str):
+        r"""
+        Updates/adds a single-char transition between two states.
+        States are added to the DFA's F as necessary.
+        """
+        self._Sigma[s1][c] = s2
+        if s1.accept: self._F.add(s1)
+        if s2.accept: self._F.add(s2)
+
+    def transition(self, s:State, c:str):
+        if s in self.Sigma:
+            return self.Sigma[s].get(c, None)
+
+    def accepts(self, inp:str) -> bool:
+        return self(inp) in self.F
+
+    @classmethod
+    def from_nfa(cls, nfa:NFA) -> DFA:
+        return nfa.to_dfa()
 
 
 """
@@ -250,7 +375,7 @@ precedence = (
     ("left", "KLEENE", "ONEPLUS", "ZEROONE"),
 )
 
-my_pattern = "c?c?(a|b)*"
+my_pattern = "c?c?(a|b)*c*"
 my_test = "ccaba"
 
 def p_start(p):
@@ -263,6 +388,10 @@ def p_start(p):
     # print(ret.F)
     # print(ret(my_test))
     print(ret.accepts(my_test))
+    my_dfa = ret.to_dfa()
+    print(my_dfa.q0, my_dfa.F)
+    print(len(my_dfa.Sigma), my_dfa)
+    print(my_dfa.accepts(my_test))
 
 def p_expression(p):
     """
