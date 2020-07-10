@@ -1,8 +1,7 @@
 from __future__ import annotations
 from abc import abstractmethod
 
-from collections import defaultdict as ddict
-from collections import deque
+from collections import defaultdict as ddict, deque, Counter
 
 from ply import lex
 from ply import yacc
@@ -57,14 +56,14 @@ class State():
 
 
 class FiniteAutomaton():
-    def __init__(self, q0=State(), F=set(), Sigma=None):
+    def __init__(self, q0=State(), F=set(), graph=None):
         self._q0 = q0
         self._F = F.copy()
-        if not Sigma:
-            self._Sigma = ddict(lambda: ddict(set))
-            self._Sigma[self.q0]
+        if not graph:
+            self._graph = ddict(lambda: ddict(set))
+            self._graph[self.q0]
         else:
-            self._Sigma = Sigma.copy()
+            self._graph = graph.copy()
     
     @abstractmethod
     def __call__(self, inp:str) -> bool:
@@ -74,7 +73,7 @@ class FiniteAutomaton():
         raise NotImplementedError(NotImplemented)
     
     def __str__(self):
-        return str({k: dict(v) for k, v in self.Sigma.items()})
+        return str({k: dict(v) for k, v in self.graph.items()})
     
     @property
     def q0(self):
@@ -88,9 +87,9 @@ class FiniteAutomaton():
     @property
     def Q(self):
         r"""
-        Enumerates all states of the FSA (source nodes of Sigma).
+        Enumerates all states of the FSA (source nodes of graph).
         """
-        return self.Sigma.keys()
+        return frozenset(self.graph.keys())
     
     @property
     def F(self):
@@ -98,26 +97,26 @@ class FiniteAutomaton():
         Enumerates all accepting states of the FSA.
         """
         return self._F
-
-        # ### Manual enumeration from Sigma
-        # if not hasattr(self, "_F_cached"):
-        #     self._F_cached = set()
-        #     for state, d in self.Sigma:
-        #         for t, ss in self.Sigma[state]:
-        #             for s in ss:
-        #                 if s.accept:
-        #                     self._F_cached.add(s)
-        # return self._F_cached
     
     @property
     def Sigma(self):
+        if not hasattr(self, "_Sigma_cached"):
+            self._Sigma_cached = set()
+            for d in self.graph.values():
+                for c in d:
+                    self._Sigma_cached.add(c)
+        return frozenset(self._Sigma_cached)
+
+    
+    @property
+    def graph(self):
         r"""
         Dict-of-dicts for state transitions of the FSA.
         """
-        return self._Sigma
+        return self._graph
     
     @abstractmethod
-    def transition(self, s:State, c:str):
+    def delta(self, s:State, c:str):
         r"""
         Evaluates a single character transition from a given state,
         returning a corresponding set of destination states.
@@ -135,7 +134,7 @@ class FiniteAutomaton():
             self._F.remove(s)
     
     @abstractmethod
-    def update_transition(self, s1:State, s2:State, c:str):
+    def update_delta(self, s1:State, s2:State, c:str):
         r"""
         Updates/adds a single-char transition between two states.
         States are added to the FSA's F as necessary.
@@ -151,31 +150,31 @@ class FiniteAutomaton():
 
 
 class NFA(FiniteAutomaton):
-    def __init__(self, q0=State(), F=set(), Sigma=None):
-        super().__init__(q0.copy(), F, Sigma)
+    def __init__(self, q0=State(), F=set(), graph=None):
+        super().__init__(q0.copy(), F, graph)
 
     def __call__(self, inp:str) -> bool:
         curr = self.epsilon_closure(self.q0, include=True)
         for c in inp:
             nxt = set()
             for s in curr:
-                nxt = nxt.union(self.transition(s, c))
+                nxt = nxt.union(self.delta(s, c))
             curr = nxt
             if not nxt: break
         return curr
     
-    def update_transition(self, s1:State, s2:State, c:str):
+    def update_delta(self, s1:State, s2:State, c:str):
         if c in {"ϵ", "ep", "epsilon", "Epsilon"}:
             c = ""
 
-        self._Sigma[s1][c].add(s2)
+        self._graph[s1][c].add(s2)
         if s1.accept: self._F.add(s1)
         if s2.accept: self._F.add(s2)
     
     def incorporate(self, other:NFA):
-        for s, d in other.Sigma.items():
+        for s, d in other.graph.items():
             for t, ss in d.items():
-                self._Sigma[s][t] = self.Sigma[s][t].union(ss)
+                self._graph[s][t] = self.graph[s][t].union(ss)
         self._F = self.F.union(other.F)
 
     @staticmethod
@@ -187,7 +186,7 @@ class NFA(FiniteAutomaton):
         ret = M[0]
         for m in M[1:]:
             for qf in list(ret.F):
-                m.update_transition(qf, m.q0, "")
+                m.update_delta(qf, m.q0, "")
                 ret.update_accept(qf, False)
             ret.incorporate(m)
         return ret
@@ -200,7 +199,7 @@ class NFA(FiniteAutomaton):
         """
         ret = NFA()
         for m in M:
-            ret.update_transition(ret.q0, m.q0, "")
+            ret.update_delta(ret.q0, m.q0, "")
             ret.incorporate(m)
         return ret
     
@@ -211,11 +210,11 @@ class NFA(FiniteAutomaton):
         Removes acceptance from end, adds acceptance to old start.
         """
         for qf in list(m.F):
-            m.update_transition(qf, m.q0, "")
+            m.update_delta(qf, m.q0, "")
             m.update_accept(qf, False)
         m.update_accept(m.q0, True)
         start = State()
-        m.update_transition(start, m.q0, "")
+        m.update_delta(start, m.q0, "")
         m.q0 = start
         return m
     
@@ -224,26 +223,22 @@ class NFA(FiniteAutomaton):
         Enumerates the ϵ-closure of a state (all states reachable via
         any number ϵ-transitions, i.e. ϵ*).
         """
-        ret = self.Sigma.get(s, dict()).get("", set())
+        ret = self.graph.get(s, dict()).get("", set())
         for ec in [self.epsilon_closure(state) for state in ret]:
             ret = ret.union(ec)
         if include:
             ret = ret.union({s})
         return ret
 
-# TODO: e closure serves transition
-#       e closure is a dfs enumeration traversing e edges only
-#       
-
-    def transition(self, s:State, c:str):
-        if s not in self.Sigma: return set()
+    def delta(self, s:State, c:str):
+        if s not in self.graph: return set()
         
         ret = set()
-        if c in self.Sigma[s]:
-            ret = ret.union(self.Sigma[s][c])
-        if "" in self.Sigma[s]:
+        if c in self.graph[s]:
+            ret = ret.union(self.graph[s][c])
+        if "" in self.graph[s]:
             for s2 in self.epsilon_closure(s):
-                ret = ret.union(self.transition(s2, c))
+                ret = ret.union(self.delta(s2, c))
         return ret
     
     def accepts(self, inp:str) -> bool:
@@ -261,22 +256,22 @@ class NFA(FiniteAutomaton):
             name = "0"
         )
         dfa_F = set()
-        dfa_Sigma = ddict(dict)
+        dfa_graph = ddict(dict)
         dfa_states = {dfa_q0.name: [dfa_q0, False]}
         ct = 1
 
         state_queue = deque()
         state_queue.append((dfa_q0.name, nfa_eq0_list))
         while state_queue:
-            source_key, source_list = state_queue.popleft()
-            source_dfa, visited = dfa_states[source_key]
+            src_key, src_list = state_queue.popleft()
+            src_dfa, visited = dfa_states[src_key]
             
             if visited: continue
             
-            for u in source_list:
+            for u in src_list:
                 dest_set = set()
-                for t, v_set in self.Sigma[u].items():
-                    if t == "" or t in dfa_Sigma[source_dfa]: continue
+                for t, v_set in self.graph[u].items():
+                    if t == "" or t in dfa_graph[src_dfa]: continue
 
                     for v in v_set:
                         dest_set = dest_set.union(self.epsilon_closure((v), include=True))
@@ -293,47 +288,148 @@ class NFA(FiniteAutomaton):
                         ct += 1
                     dest_dfa = dfa_states[dest_key][0]
 
-                    if source_dfa.accept: # redundant to add state to F as source/dest?
-                        dfa_F.add(source_dfa)
+                    if src_dfa.accept: # redundant to add state to F as src/dest?
+                        dfa_F.add(src_dfa)
                     if dest_dfa.accept:
                         dfa_F.add(dest_dfa)
-                    dfa_Sigma[source_dfa][t] = dest_dfa
+                    dfa_graph[src_dfa][t] = dest_dfa
 
                     state_queue.append((dest_key, dest_list))
 
-            dfa_states[source_key][1] = True
-        return DFA(dfa_q0, dfa_F, dfa_Sigma)
+            dfa_states[src_key][1] = True
+        return DFA(dfa_q0, dfa_F, dfa_graph)
 
 
 class DFA(FiniteAutomaton):
-    def __init__(self, q0=State(), F=set(), Sigma=ddict(dict)):
-        super().__init__(q0, F, Sigma)
+    def __init__(self, q0=State(), F=set(), graph=ddict(dict)):
+        super().__init__(q0, F, graph)
 
     def __call__(self, inp:str) -> bool:
         curr = self.q0
         for c in inp:
-            curr = self.transition(curr, c)
+            curr = self.delta(curr, c)
             if not curr: return
         return curr
     
-    def __str__(self):
-        return super().__str__()
-    
-    def update_transition(self, s1:State, s2:State, c:str):
+    def update_delta(self, s1:State, s2:State, c:str):
         r"""
         Updates/adds a single-char transition between two states.
         States are added to the DFA's F as necessary.
         """
-        self._Sigma[s1][c] = s2
+        self._graph[s1][c] = s2
         if s1.accept: self._F.add(s1)
         if s2.accept: self._F.add(s2)
 
-    def transition(self, s:State, c:str):
-        if s in self.Sigma:
-            return self.Sigma[s].get(c, None)
+    def delta(self, s:State, c:str):
+        if s in self.graph:
+            return self.graph[s].get(c, None)
 
     def accepts(self, inp:str) -> bool:
         return self(inp) in self.F
+
+    def _prune_unreachable(self):
+        reachable = set([self.q0])
+        new_states = set([self.q0])
+        while True:
+            temp = set()
+            for q in new_states:
+                temp = temp.union(set(self.graph[q].values()))
+            new_states = temp.difference(reachable)
+            reachable = reachable.union(new_states)
+            if not new_states: break
+        unreachable = self.Q.difference(reachable)
+
+        for s in unreachable:
+            del self._graph[s]
+
+        # inbound = ddict(int)
+        # for out in self.graph.values():
+        #     for dest in out.values():
+        #         inbound[dest] += 1
+
+        # prev = len(inbound)
+        # while len(inbound) == prev:
+        #     prev = len(inbound)
+        #     for state in list(self.Q):
+        #         if state not in inbound:
+        #             out = self.graph.pop(state)
+        #             for dest in out.values():
+        #                 inbound[dest] -= 1
+        #                 if inbound[dest] <= 0:
+        #                     del inbound[dest]
+    
+    def minimize(self):
+        r"""
+        Minimizes DFA to an equivalent DFA with the smallest possible
+        number of states via Hopcroft's algorithm.
+
+        Hopcroft's algorithm is the fastest known algorithm for partition
+        refinement in the automata context. Alternatives include Moore's
+        algorithm, Brzozowski's algorithm, or the table-filling algorithm
+        based on the Myhill-Nerode theorem.
+        """
+        self._prune_unreachable()
+
+        """Hopcroft's partition refinement"""
+        P = {frozenset(self.F)}
+        complement = frozenset(self.Q.difference(self.F))
+        if complement: P.add(complement)
+        W = deque(P)
+        while W:
+            A = W.popleft()
+            for c in self.Sigma:
+                X = frozenset(s for s in self.Q if self.delta(s, c) in A)
+                for Y in list(P):
+                    inter = X.intersection(Y)
+                    diff = Y.difference(X)
+                    if not inter or not diff: continue
+                    P.remove(Y)
+                    P.add(inter)
+                    P.add(diff)
+                    try:
+                        W.remove(Y)
+                        W.append(inter)
+                        W.append(diff)
+                    except:
+                        if len(inter) <= len(diff):
+                            W.append(inter)
+                        else:
+                            W.append(diff)
+        
+        """Reconstruct DFA from refined supernodes of P"""
+        label = 1
+        min_q0, min_graph, min_F = -1, ddict(dict), set()
+        P = list(P)
+        reps, min_states = [], []
+        for supernode in P:
+            src = list(supernode)[0]
+            reps.append(src)
+
+            accept = src in self.F
+            curr = State(accept=accept, name=str(label))
+            label += 1
+            if self.q0 in supernode:
+                curr.name = "0"
+                label -= 1
+                min_q0 = curr
+            if accept:
+                min_F.add(curr)
+            min_states.append(curr)
+
+        supernode_to_minstate = dict(zip(P, min_states))
+        container = dict(zip(reps, P))
+        for s in self.Q:
+            if s in container: continue
+            for supernode in P:
+                if s in supernode:
+                    container[s] = supernode
+        for curr, src, supernode in zip(min_states, reps, P):
+            for c, dest in self.graph[src].items():
+                min_graph[curr][c] = supernode_to_minstate[container[dest]]
+        
+        self._q0 = min_q0
+        self._graph = min_graph
+        self._F = min_F
 
     @classmethod
     def from_nfa(cls, nfa:NFA) -> DFA:
@@ -378,10 +474,10 @@ precedence = (
     ("left", "KLEENE", "ONEPLUS", "ZEROONE"),
 )
 
-my_pattern = "c?c?(a|b)*c*"
-my_test = "ccc"
-# my_pattern = "c*"
-# my_test = ""
+# my_pattern = "c?c?d(a|b)*c*"
+# my_test = "ccac"
+my_pattern = "aa(b|c)*"
+my_test = "a"
 
 def p_start(p):
     """
@@ -393,6 +489,10 @@ def p_start(p):
 
     print(ret.accepts(my_test))
     print(my_dfa.accepts(my_test))
+    my_dfa.minimize()
+    print(my_dfa.accepts(my_test))
+    # print(my_dfa.q0, my_dfa)
+    # print(my_dfa.Q, my_dfa.Sigma, my_dfa.F)
 
 def p_expression(p):
     """
@@ -458,7 +558,7 @@ def run(p):
             return NFA.concat(run(p[1]), run(p[2]))
     else:
         ret = NFA()
-        ret.update_transition(ret.q0, State(True), p)
+        ret.update_delta(ret.q0, State(True), p)
         return ret
 
 parser = yacc.yacc()
